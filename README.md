@@ -5,6 +5,14 @@ Powered by **YOLOv8**, **Segment Anything Model (SAM)**, and **LightX API**.
 
 ---
 
+## Demo
+
+<img width="1919" height="944" alt="Screenshot 2025-08-12 131011" src="https://github.com/user-attachments/assets/4b85e422-9742-41cf-a7ac-92bd3520d0c6" />
+
+<img width="1919" height="946" alt="Screenshot 2025-08-12 131045" src="https://github.com/user-attachments/assets/48074ad0-4427-4a39-b8f6-0e88ff10690d" />
+
+---
+
 ## Features  
 - **Automatic Object Detection** using YOLOv8  
 - **Smart Segmentation** via Mobile SAM for precise mask generation and fast performance  
