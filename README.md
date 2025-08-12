@@ -7,7 +7,7 @@ Powered by **YOLOv8**, **Segment Anything Model (SAM)**, and **LightX API**.
 
 ## Features  
 - **Automatic Object Detection** using YOLOv8  
-- **Smart Segmentation** via SAM for precise mask generation  
+- **Smart Segmentation** via Mobile SAM for precise mask generation and fast performance  
 - **Interactive Review UI** built with Streamlit  
 - **AI-based Background Filling** using LightX inpainting  
 - **FastAPI Backend** for seamless processing  
@@ -25,12 +25,13 @@ pip install -r requirements.txt
 Create a .env file in the project root:
 ```bash
 LIGHTX_API_KEY=your_lightx_api_key_here
+BACKEND_URL=your_backend_url
 ```
 You can get your API key from LightX Developer Portal.
 
 ### 3. Download required models
 Place the following files in the root directory:
-- sam_vit_b_01ec64.pth
+- mobile_sam.pt
 - yolov8s.pt
 
 ---
@@ -55,7 +56,7 @@ streamlit run frontend.py
 **Backend:**
 - FastAPI – API for object detection, segmentation, and cleanup
 - YOLOv8 – Object detection
-- Segment Anything Model (SAM) – Object segmentation
+- Mobile Segment Anything Model (SAM) – Object segmentation
 - LightX API – Inpainting & background fill
 
 **Other Tools:**
