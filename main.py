@@ -40,14 +40,19 @@ except Exception as e:
 
 # --- SAM (Segment Anything Model) ---
 SAM_CHECKPOINT_PATH = "sam_vit_b_01ec64.pth"
-SAM_MODEL_TYPE = "vit_b"
+SAM_MODEL_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
+
 if not os.path.exists(SAM_CHECKPOINT_PATH):
-    raise FileNotFoundError(
-        f"SAM checkpoint not found at '{SAM_CHECKPOINT_PATH}'. "
-        "Please download it. e.g., wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
-    )
+    print("Downloading SAM model...")
+    r = requests.get(SAM_MODEL_URL, stream=True)
+    r.raise_for_status()
+    with open(SAM_CHECKPOINT_PATH, "wb") as f:
+        for chunk in r.iter_content(chunk_size=8192):
+            f.write(chunk)
+    print("SAM model downloaded successfully.")
+
 try:
-    SAM_MODEL = sam_model_registry[SAM_MODEL_TYPE](checkpoint=SAM_CHECKPOINT_PATH)
+    SAM_MODEL = sam_model_registry["vit_b"](checkpoint=SAM_CHECKPOINT_PATH)
     SAM_MODEL.to(device=DEVICE)
     SAM_PREDICTOR = SamPredictor(SAM_MODEL)
 except Exception as e:
