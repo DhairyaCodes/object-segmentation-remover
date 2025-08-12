@@ -1,0 +1,17 @@
+ipykernel
+torch
+torchvision
+opencv-python
+matplotlib
+git+https://github.com/facebookresearch/segment-anything.git
+ultralytics
+ftfy
+regex
+tqdm
+git+https://github.com/openai/CLIP.git
+fastapi
+streamlit
+google-generativeai
+uvicorn
+python-multipart
+python-dotenv
