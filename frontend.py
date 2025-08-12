@@ -4,9 +4,14 @@ import requests
 import io
 from PIL import Image
 import base64
+from dotenv import load_dotenv
+import os
 
 # --- Configuration ---
-BACKEND_URL = "http://127.0.0.1:8000"
+load_dotenv()
+BACKEND_URL = os.getenv('BACKEND_URL')
+if not BACKEND_URL:
+    print("WARNING: BACKEND_URL not available")
 
 # --- Helper Functions ---
 def reset_session_state():
