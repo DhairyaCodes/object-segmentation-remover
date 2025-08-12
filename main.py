@@ -14,12 +14,13 @@ import requests
 from fastapi import FastAPI, File, UploadFile, HTTPException, Body
 from fastapi.responses import StreamingResponse, JSONResponse
 from PIL import Image
-from segment_anything import sam_model_registry, SamPredictor
+from mobile_sam import sam_model_registry, SamPredictor
 from ultralytics import YOLO
 from starlette.middleware.cors import CORSMiddleware
 
 # --- Global Variables & Model Loading ---
 SESSION_STORE: Dict[str, Dict] = {}
+MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 
 print("Loading models, this might take a moment...")
 
@@ -39,20 +40,14 @@ except Exception as e:
     raise RuntimeError(f"Failed to load YOLO model: {e}")
 
 # --- SAM (Segment Anything Model) ---
-SAM_CHECKPOINT_PATH = "sam_vit_b_01ec64.pth"
-SAM_MODEL_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
-
+SAM_CHECKPOINT_PATH = "mobile_sam.pt"
+SAM_MODEL_TYPE = "vit_t"
 if not os.path.exists(SAM_CHECKPOINT_PATH):
-    print("Downloading SAM model...")
-    r = requests.get(SAM_MODEL_URL, stream=True)
-    r.raise_for_status()
-    with open(SAM_CHECKPOINT_PATH, "wb") as f:
-        for chunk in r.iter_content(chunk_size=8192):
-            f.write(chunk)
-    print("SAM model downloaded successfully.")
-
+    raise FileNotFoundError(
+        f"SAM checkpoint not found at '{SAM_CHECKPOINT_PATH}'. "
+    )
 try:
-    SAM_MODEL = sam_model_registry["vit_b"](checkpoint=SAM_CHECKPOINT_PATH)
+    SAM_MODEL = sam_model_registry[SAM_MODEL_TYPE](checkpoint=SAM_CHECKPOINT_PATH)
     SAM_MODEL.to(device=DEVICE)
     SAM_PREDICTOR = SamPredictor(SAM_MODEL)
 except Exception as e:
@@ -129,6 +124,44 @@ async def process_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="File provided is not an image.")
 
     contents = await file.read()
+    current_content_type = file.content_type
+    
+    if len(contents) > MAX_IMAGE_SIZE_BYTES:
+        print(f"Image is too large ({len(contents) / 1024 / 1024:.2f} MB). Resizing to under 5 MB...")
+        img = Image.open(io.BytesIO(contents))
+        
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        
+        output_format = 'JPEG'
+        current_content_type = 'image/jpeg'
+        quality = 90
+        
+        while len(contents) > MAX_IMAGE_SIZE_BYTES and quality > 10:
+            buffer = io.BytesIO()
+            img.save(buffer, format=output_format, quality=quality)
+            contents = buffer.getvalue()
+            print(f" > Resized with quality {quality}. New size: {len(contents) / 1024 / 1024:.2f} MB")
+            quality -= 10
+            
+        if len(contents) > MAX_IMAGE_SIZE_BYTES:
+            print(" > Quality reduction insufficient. Reducing dimensions...")
+            while len(contents) > MAX_IMAGE_SIZE_BYTES:
+                scale_factor = (MAX_IMAGE_SIZE_BYTES / len(contents))**0.5
+                new_width = int(img.width * scale_factor * 0.95)
+                new_height = int(img.height * scale_factor * 0.95)
+                img = img.resize((new_width, new_height), Image.LANCZOS)
+                
+                buffer = io.BytesIO()
+                img.save(buffer, format=output_format, quality=85)
+                contents = buffer.getvalue()
+                print(f" > Resized dimensions to {img.size}. New size: {len(contents) / 1024 / 1024:.2f} MB")
+
+        if len(contents) > MAX_IMAGE_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="Image could not be resized to under 5MB. Please upload a smaller file.")
+        
+        print("Image resized successfully.")
+
     image_np = np.frombuffer(contents, np.uint8)
     image_bgr = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
@@ -137,7 +170,12 @@ async def process_image(file: UploadFile = File(...)):
     yolo_results = YOLO_MODEL(image_rgb, conf=0.4)
     
     if len(yolo_results[0].boxes) == 0:
-        raise HTTPException(status_code=404, detail="No objects were detected in the image.")
+        return JSONResponse(status_code=200, content={
+            "session_id": str(uuid.uuid4()),
+            "original_image_b64": base64.b64encode(contents).decode('utf-8'),
+            "masks_b64": [],
+            "message": "No objects were detected in the image."
+        })
 
     print(f"Found {len(yolo_results[0].boxes)} potential objects. Generating masks with SAM...")
     SAM_PREDICTOR.set_image(image_rgb)
@@ -148,7 +186,11 @@ async def process_image(file: UploadFile = File(...)):
     masks = masks.cpu().numpy().squeeze(1)
 
     session_id = str(uuid.uuid4())
-    SESSION_STORE[session_id] = {"original_image": contents, "all_masks": masks}
+    SESSION_STORE[session_id] = {
+        "original_image": contents, 
+        "all_masks": masks, 
+        "content_type": current_content_type
+    }
 
     visual_masks_bytes = [image_to_bytes(create_visual_mask(m), "PNG") for m in masks]
     print(f"Session {session_id} created with {len(masks)} masks.")
@@ -172,13 +214,15 @@ async def cleanup_image(session_id: str = Body(...), selected_indices: List[int]
     session_data = SESSION_STORE[session_id]
     original_image_bytes = session_data["original_image"]
     all_masks = session_data["all_masks"]
+    content_type = session_data.get("content_type", "image/png")
 
     if not selected_indices:
+        # Clean up session data before returning
         del SESSION_STORE[session_id]
         print(f"No objects selected. Returning original image for session {session_id}.")
-        return StreamingResponse(io.BytesIO(original_image_bytes), media_type="image/png")
+        return StreamingResponse(io.BytesIO(original_image_bytes), media_type=content_type)
 
-    if max(selected_indices) >= len(all_masks):
+    if any(i >= len(all_masks) for i in selected_indices):
         raise HTTPException(status_code=400, detail="Invalid selection of objects to remove.")
 
     print(f"Combining {len(selected_indices)} masks for session {session_id}...")
@@ -193,7 +237,7 @@ async def cleanup_image(session_id: str = Body(...), selected_indices: List[int]
 
     try:
         print("Uploading original image to LightX...")
-        image_url = upload_to_lightx(original_image_bytes, "image/png", LIGHTX_API_KEY)
+        image_url = upload_to_lightx(original_image_bytes, content_type, LIGHTX_API_KEY)
         
         print("Uploading mask to LightX...")
         mask_url = upload_to_lightx(final_mask_bytes, "image/png", LIGHTX_API_KEY)
@@ -215,7 +259,7 @@ async def cleanup_image(session_id: str = Body(...), selected_indices: List[int]
 
         status_endpoint = "https://api.lightxeditor.com/external/api/v1/order-status"
         status_payload = {"orderId": order_id}
-        max_retries = 5
+        max_retries = 10
         
         for i in range(max_retries):
             print(f"Checking status... Attempt {i + 1}/{max_retries}")
